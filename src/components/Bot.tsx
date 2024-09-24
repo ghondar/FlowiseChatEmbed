@@ -613,9 +613,18 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
       chatId: chatId(),
     };
 
-    if (uploads && uploads.length > 0) body.uploads = uploads;
-
     if (props.chatflowConfig) body.overrideConfig = props.chatflowConfig;
+
+		if (uploads && uploads.length > 0) {
+			body.uploads = uploads;
+			body.overrideConfig = {
+				...body.overrideConfig,
+				vars: {
+					...(body.overrideConfig?.vars ? body.overrideConfig.vars : {}),
+					uploads: uploads,
+				}
+			}
+		}
 
     if (leadEmail()) body.leadEmail = leadEmail();
 
