@@ -107,7 +107,7 @@ export type observersConfigType = Record<'observeUserInput' | 'observeLoading' |
 export type BotProps = {
   chatflowid: string;
   apiHost?: string;
-	streaming?: boolean;
+  streaming?: boolean;
   onRequest?: (request: RequestInit) => Promise<void>;
   chatflowConfig?: Record<string, unknown>;
   welcomeMessage?: string;
@@ -854,18 +854,18 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
       setMessages([...filteredMessages]);
     }
 
-		if(props.streaming) {
-			// Determine if particular chatflow is available for streaming
-			const { data } = await isStreamAvailableQuery({
-				chatflowid: props.chatflowid,
-				apiHost: props.apiHost,
-				onRequest: props.onRequest,
-			});
+    if (props.streaming) {
+      // Determine if particular chatflow is available for streaming
+      const { data } = await isStreamAvailableQuery({
+        chatflowid: props.chatflowid,
+        apiHost: props.apiHost,
+        onRequest: props.onRequest,
+      });
 
-			if (data) {
-				setIsChatFlowAvailableToStream(data?.isStreaming ?? false);
-			}
-		}
+      if (data) {
+        setIsChatFlowAvailableToStream(data?.isStreaming ?? false);
+      }
+    }
 
     // Get the chatbotConfig
     const result = await getChatbotConfig({
