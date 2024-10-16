@@ -137,6 +137,7 @@ You can also customize chatbot with different configuration
         starterPromptFontSize: 15,
         clearChatOnReload: false, // If set to true, the chat will be cleared when the page reloads
         sourceDocsTitle: 'Sources:'
+        renderHTML: true,
         botMessage: {
           backgroundColor: '#f7f8ff',
           textColor: '#303235',
@@ -164,6 +165,10 @@ You can also customize chatbot with different configuration
         },
         feedback: {
           color: '#303235',
+        },
+         dateTimeToggle: {
+          date: true,
+          time: true,
         },
         footer: {
           textColor: '#303235',
