@@ -7,6 +7,7 @@ import {
   IncomingInput,
   getChatbotConfig,
   FeedbackRatingType,
+  createAttachmentWithFormData,
 } from '@/queries/sendMessageQuery';
 import { TextInput } from './inputs/textInput';
 import { GuestBubble } from './bubbles/GuestBubble';
@@ -55,7 +56,7 @@ export type UploadsConfig = {
   fileUploadSizeAndTypes: IUploadConstraits[];
   isImageUploadAllowed: boolean;
   isSpeechToTextEnabled: boolean;
-  isFileUploadAllowed: boolean;
+  isRAGFileUploadAllowed: boolean;
 };
 
 type FilePreviewData = string | ArrayBuffer;
@@ -111,6 +112,13 @@ export type MessageType = {
   followUpPrompts?: string;
   dateTime?: string;
 };
+
+type IUploads = {
+  data: FilePreviewData;
+  type: string;
+  name: string;
+  mime: string;
+}[];
 
 type observerConfigType = (accessor: string | boolean | object | MessageType[]) => void;
 export type observersConfigType = Record<'observeUserInput' | 'observeLoading' | 'observeMessages', observerConfigType>;
@@ -267,6 +275,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
   const [isMessageStopping, setIsMessageStopping] = createSignal(false);
   const [starterPrompts, setStarterPrompts] = createSignal<string[]>([], { equals: false });
   const [chatFeedbackStatus, setChatFeedbackStatus] = createSignal<boolean>(false);
+  const [fullFileUpload, setFullFileUpload] = createSignal<boolean>(false);
   const [uploadsConfig, setUploadsConfig] = createSignal<UploadsConfig>();
   const [leadsConfig, setLeadsConfig] = createSignal<LeadsConfig>();
   const [isLeadSaved, setIsLeadSaved] = createSignal(false);
@@ -289,7 +298,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
 
   // drag & drop
   const [isDragActive, setIsDragActive] = createSignal(false);
-  const [uploadedFiles, setUploadedFiles] = createSignal<File[]>([]);
+  const [uploadedFiles, setUploadedFiles] = createSignal<{ file: File; type: string }[]>([]);
 
   onMount(() => {
     if (botProps?.observersConfig) {
@@ -634,6 +643,83 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
     });
   };
 
+  const handleFileUploads = async (uploads: IUploads) => {
+    if (!uploadedFiles().length) return uploads;
+
+    if (fullFileUpload()) {
+      const filesWithFullUploadType = uploadedFiles().filter((file) => file.type === 'file:full');
+
+      if (filesWithFullUploadType.length > 0) {
+        const formData = new FormData();
+        for (const file of filesWithFullUploadType) {
+          formData.append('files', file.file);
+        }
+        formData.append('chatId', chatId());
+
+        const response = await createAttachmentWithFormData({
+          chatflowid: props.chatflowid,
+          apiHost: props.apiHost,
+          formData: formData,
+        });
+
+        if (!response.data) {
+          throw new Error('Unable to upload documents');
+        } else {
+          const data = response.data as any;
+          for (const extractedFileData of data) {
+            const content = extractedFileData.content;
+            const fileName = extractedFileData.name;
+
+            // find matching name in previews and replace data with content
+            const uploadIndex = uploads.findIndex((upload) => upload.name === fileName);
+            if (uploadIndex !== -1) {
+              uploads[uploadIndex] = {
+                ...uploads[uploadIndex],
+                data: content,
+                name: fileName,
+                type: 'file:full',
+              };
+            }
+          }
+        }
+      }
+    } else if (uploadsConfig()?.isRAGFileUploadAllowed) {
+      const filesWithRAGUploadType = uploadedFiles().filter((file) => file.type === 'file:rag');
+
+      if (filesWithRAGUploadType.length > 0) {
+        const formData = new FormData();
+        for (const file of filesWithRAGUploadType) {
+          formData.append('files', file.file);
+        }
+        formData.append('chatId', chatId());
+
+        const response = await upsertVectorStoreWithFormData({
+          chatflowid: props.chatflowid,
+          apiHost: props.apiHost,
+          formData: formData,
+        });
+
+        if (!response.data) {
+          throw new Error('Unable to upload documents');
+        } else {
+          // delay for vector store to be updated
+          const delay = (delayInms: number) => {
+            return new Promise((resolve) => setTimeout(resolve, delayInms));
+          };
+          await delay(2500); //TODO: check if embeddings can be retrieved using file name as metadata filter
+
+          uploads = uploads.map((upload) => {
+            return {
+              ...upload,
+              type: 'file:rag',
+            };
+          });
+        }
+      }
+    }
+    return uploads;
+  };
+
   // Handle form submission
   const handleSubmit = async (value: string, action?: IAction | undefined | null) => {
     if (value.trim() === '') {
@@ -646,7 +732,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
     setLoading(true);
     scrollToBottom();
 
-    const uploads = previews().map((item) => {
+    let uploads: IUploads = previews().map((item) => {
       return {
         data: item.data,
         type: item.type,
@@ -654,6 +740,13 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
         mime: item.mime,
       };
     });
+
+    try {
+      uploads = await handleFileUploads(uploads);
+    } catch (error) {
+      handleError('Unable to upload documents');
+      return;
+    }
 
     clearPreviews();
 
@@ -684,29 +777,6 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
     if (leadEmail()) body.leadEmail = leadEmail();
 
     if (action) body.action = action;
-
-    if (uploadedFiles().length > 0) {
-      const formData = new FormData();
-      for (const file of uploadedFiles()) {
-        formData.append('files', file);
-      }
-      formData.append('chatId', chatId());
-
-      const response = await upsertVectorStoreWithFormData({
-        chatflowid: props.chatflowid,
-        apiHost: props.apiHost,
-        formData: formData,
-      });
-      if (!response.data) {
-        setMessages((prevMessages) => [...prevMessages, { message: 'Unable to upload documents', type: 'apiMessage' }]);
-      } else {
-        // delay for vector store to be updated
-        const delay = (delayInms: number) => {
-          return new Promise((resolve) => setTimeout(resolve, delayInms));
-        };
-        await delay(2500); //TODO: check if embeddings can be retrieved using file name as metadata filter
-      }
-    }
 
     if (isChatFlowAvailableToStream()) {
       fetchResponseFromEventStream(props.chatflowid, body);
@@ -965,6 +1035,9 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
       if (chatbotConfig.followUpPrompts) {
         setFollowUpPromptsStatus(chatbotConfig.followUpPrompts.status);
       }
+      if (chatbotConfig.fullFileUpload) {
+        setFullFileUpload(chatbotConfig.fullFileUpload.status);
+      }
     }
 
     // eslint-disable-next-line solid/reactivity
@@ -1028,7 +1101,10 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
         }
       });
     }
-    if (uploadsConfig() && uploadsConfig()?.isFileUploadAllowed && uploadsConfig()?.fileUploadSizeAndTypes) {
+    if (fullFileUpload()) {
+      return true;
+    }
+    if (uploadsConfig() && uploadsConfig()?.isRAGFileUploadAllowed && uploadsConfig()?.fileUploadSizeAndTypes) {
       const fileExt = file.name.split('.').pop();
       if (fileExt) {
         uploadsConfig()?.fileUploadSizeAndTypes.map((allowed) => {
@@ -1064,7 +1140,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
           .join(',')
           .includes(file.type)
       ) {
-        uploadedFiles.push(file);
+        uploadedFiles.push({ file, type: fullFileUpload() ? 'file:full' : 'file:rag' });
       }
       const reader = new FileReader();
       const { name } = file;
@@ -1093,8 +1169,17 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
     setPreviews((prevPreviews) => [...prevPreviews, ...(newFiles as FilePreview[])]);
   };
 
+  const isFileUploadAllowed = () => {
+    if (fullFileUpload()) {
+      return true;
+    } else if (uploadsConfig()?.isRAGFileUploadAllowed) {
+      return true;
+    }
+    return false;
+  };
+
   const handleDrag = (e: DragEvent) => {
-    if (uploadsConfig()?.isImageUploadAllowed || uploadsConfig()?.isFileUploadAllowed) {
+    if (uploadsConfig()?.isImageUploadAllowed || isFileUploadAllowed()) {
       e.preventDefault();
       e.stopPropagation();
       if (e.type === 'dragenter' || e.type === 'dragover') {
@@ -1106,7 +1191,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
   };
 
   const handleDrop = async (e: InputEvent | DragEvent) => {
-    if (!uploadsConfig()?.isImageUploadAllowed && !uploadsConfig()?.isFileUploadAllowed) {
+    if (!uploadsConfig()?.isImageUploadAllowed && !isFileUploadAllowed) {
       return;
     }
     e.preventDefault();
@@ -1125,7 +1210,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
             .join(',')
             .includes(file.type)
         ) {
-          uploadedFiles.push(file);
+          uploadedFiles.push({ file, type: fullFileUpload() ? 'file:full' : 'file:rag' });
         }
         const reader = new FileReader();
         const { name } = file;
@@ -1275,7 +1360,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
         </div>
       );
     } else {
-      return <FilePreview item={item} onDelete={() => handleDeletePreview(item)} />;
+      return <FilePreview disabled={getInputDisabled()} item={item} onDelete={() => handleDeletePreview(item)} />;
     }
   };
 
@@ -1296,7 +1381,7 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
             onDrop={handleDrop}
           />
         )}
-        {isDragActive() && (uploadsConfig()?.isImageUploadAllowed || uploadsConfig()?.isFileUploadAllowed) && (
+        {isDragActive() && (uploadsConfig()?.isImageUploadAllowed || isFileUploadAllowed()) && (
           <div
             class="absolute top-0 left-0 bottom-0 right-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm text-white z-40 gap-2 border-2 border-dashed"
             style={{ 'border-color': props.bubbleBackgroundColor }}
@@ -1522,9 +1607,11 @@ export const Bot = (botProps: BotProps & { class?: string }) => {
                 autoFocus={props.textInput?.autoFocus}
                 fontSize={props.fontSize}
                 disabled={getInputDisabled()}
-                defaultValue={userInput()}
+                inputValue={userInput()}
+                onInputChange={(value) => setUserInput(value)}
                 onSubmit={handleSubmit}
                 uploadsConfig={uploadsConfig()}
+                isFullFileUpload={fullFileUpload()}
                 setPreviews={setPreviews}
                 onMicrophoneClicked={onMicrophoneClicked}
                 handleFileChange={handleFileChange}
