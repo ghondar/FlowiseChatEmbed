@@ -9,7 +9,7 @@ type BotProps = {
   chatflowConfig?: Record<string, unknown>;
   observersConfig?: observersConfigType;
   theme?: BubbleTheme;
-	streaming?: boolean;
+  streaming?: boolean;
 };
 
 let elementUsed: Element | undefined;

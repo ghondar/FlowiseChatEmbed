@@ -7,5 +7,5 @@ export const defaultBotProps: BubbleProps = {
   chatflowConfig: undefined,
   theme: undefined,
   observersConfig: undefined,
-	streaming: false
+  streaming: false,
 };
